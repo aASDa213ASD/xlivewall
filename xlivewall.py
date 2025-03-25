@@ -1,7 +1,19 @@
 #!/usr/bin/env python3
-from Xlib import X, display, Xatom
 import sys
 import subprocess
+import time
+import json
+import socket
+from Xlib import X, display, Xatom, XK
+
+def send_ipc_command(ipc_path, command):
+    """Send a JSON command to the mpv IPC socket."""
+    try:
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
+            client.connect(ipc_path)
+            client.sendall((json.dumps(command) + "\n").encode('utf-8'))
+    except Exception as e:
+        print("[ERROR] Failed to send IPC command:", e)
 
 def main():
     if len(sys.argv) < 2:
@@ -27,7 +39,7 @@ def main():
         X.InputOutput,
         X.CopyFromParent,
         background_pixel=0,
-        event_mask=(X.ExposureMask | X.StructureNotifyMask)
+        event_mask=(X.ExposureMask | X.StructureNotifyMask | X.KeyPressMask)
     )
     win.change_attributes(override_redirect=True)
 
@@ -42,25 +54,78 @@ def main():
     win.configure(stack_mode=X.Below)
     print("[INFO] Created desktop window with id: 0x{:x}".format(win.id))
     
-    # (Optional) set opacity if desired
-    # For example, to set 80% opacity:
-    # opacity = int(0.8 * 0xFFFFFFFF)
-    # NET_WM_WINDOW_OPACITY = d.intern_atom("_NET_WM_WINDOW_OPACITY")
-    # win.change_property(NET_WM_WINDOW_OPACITY, Xatom.CARDINAL, 32, [opacity])
-
-    # Prepare the command: replace any occurrence of "WID" in the arguments with our window ID in hex
+    # Prepare IPC socket path for mpv; we embed the window id to make it unique.
+    ipc_path = f"/tmp/mpv-ipc-0x{win.id:x}.sock"
+    
+    # Prepare the command: replace any occurrence of "WID" with our window ID in hex.
     win_id_hex = "0x{:x}".format(win.id)
     cmd = [arg.replace("WID", win_id_hex) for arg in sys.argv[1:]]
+    
+    # Automatically insert the --wid flag if not provided.
+    if not any("--wid" in arg for arg in cmd):
+        cmd.append(f"--wid={win_id_hex}")
+    
+    # Default to --loop if no loop flag is provided.
+    if not any("--loop" in arg for arg in cmd):
+        cmd.append("--loop")
+    
+    # Append other default flags if not already provided:
+    # - Hide on-screen controls
+    if not any("--no-osc" in arg for arg in cmd):
+        cmd.append("--no-osc")
+    # - Enable hardware decoding
+    if not any("--hwdec" in arg for arg in cmd):
+        cmd.append("--hwdec=auto")
+    # - Enable caching and set cache seconds for long videos
+    if not any("--cache=yes" in arg for arg in cmd):
+        cmd.append("--cache=yes")
+    if not any("--cache-secs" in arg for arg in cmd):
+        cmd.append("--cache-secs=60")
+    # - Set initial volume to 0
+    if not any("--volume=" in arg for arg in cmd):
+        cmd.append("--volume=0")
+    # - Provide the IPC socket path for volume control
+    if not any("--input-ipc-server" in arg for arg in cmd):
+        cmd.append(f"--input-ipc-server={ipc_path}")
+    
     print("[INFO] Executing command:", cmd)
     
-    # Launch the external command (for example, a video player that accepts a window ID)
+    # Launch the external command (e.g., mpv)
     proc = subprocess.Popen(cmd)
     
+    # Wait a moment for mpv to create the IPC socket
+    timeout = 5  # seconds
+    waited = 0
+    while waited < timeout:
+        try:
+            with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as s:
+                s.connect(ipc_path)
+            print("[INFO] Connected to mpv IPC socket.")
+            break
+        except Exception:
+            time.sleep(0.1)
+            waited += 0.1
+    else:
+        print("[WARNING] Could not connect to mpv IPC socket.")
+
+    # Set up a default volume level starting at 0
+    current_volume = 0
+    volume_step = 5
+
     # Enter an event loop to keep the window alive while the external process is running
     try:
         while proc.poll() is None:
             event = d.next_event()  # blocking; process events if needed
-            # (For debugging, you could print events here)
+            if event.type == X.KeyPress:
+                keysym = d.keycode_to_keysym(event.detail, 0)
+                if keysym == XK.XK_Up:
+                    current_volume += volume_step
+                    print("[INFO] Increasing volume to", current_volume)
+                    send_ipc_command(ipc_path, {"command": ["set_property", "volume", current_volume]})
+                elif keysym == XK.XK_Down:
+                    current_volume = max(0, current_volume - volume_step)
+                    print("[INFO] Decreasing volume to", current_volume)
+                    send_ipc_command(ipc_path, {"command": ["set_property", "volume", current_volume]})
     except KeyboardInterrupt:
         proc.terminate()
         print("[INFO] Terminated by user")
