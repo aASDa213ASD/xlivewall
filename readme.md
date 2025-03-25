@@ -40,7 +40,7 @@ The script expects at least one argument – the command to be executed with its
 ### Basic Command Format
 
 ```bash
-./your_script_name.py COMMAND [ARGS...]
+./xlivewall.py COMMAND [ARGS...]
 ```
 
 ### Example
@@ -48,7 +48,7 @@ The script expects at least one argument – the command to be executed with its
 For example, if you want to use `mpv` to display a video as your background and it accepts a window ID parameter via the option `--wid`, you can run:
 
 ```bash
-./your_script_name.py mpv --wid=WID /path/to/video.mp4 --loop
+./xlivewall.py mpv --wid=WID /path/to/video.mp4 --loop
 ```
 
 In this example:
