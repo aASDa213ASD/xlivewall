@@ -30,7 +30,7 @@ This Python application creates a desktop window on an Xorg session and then lau
 3. **Download the Script:**  
    Clone or download the repository containing the script. Make sure the script is executable:
    ```bash
-   chmod +x your_script_name.py
+   chmod +x xlivewall.py
    ```
 
 ## Usage
